@@ -1,300 +1,170 @@
-# Vault [![build](https://github.com/hashicorp/vault/actions/workflows/build.yml/badge.svg)](https://github.com/hashicorp/vault/actions/workflows/build.yml) [![ci](https://github.com/hashicorp/vault/actions/workflows/ci.yml/badge.svg)](https://github.com/hashicorp/vault/actions/workflows/ci.yml)  [![vault enterprise](https://img.shields.io/badge/vault-enterprise-yellow.svg?colorB=7c8797&colorA=000000)](https://www.hashicorp.com/products/vault/?utm_source=github&utm_medium=banner&utm_campaign=github-vault-enterprise)
+# Vault — with Human Approval Workflow
 
-----
+This is a fork of [HashiCorp Vault](https://github.com/hashicorp/vault) (BUSL-1.1) that adds a **human approval workflow for database credential requests** — entirely in OSS, no Enterprise license required.
 
-**Please note**: We take Vault's security and our users' trust very seriously. If you believe you have found a security issue in Vault, _please responsibly disclose_ by contacting us at [security@hashicorp.com](mailto:security@hashicorp.com).
+> **New feature additions are on the `release/2.0.0-approvals` branch.**
 
-----
+---
 
-- Website: [developer.hashicorp.com/vault](https://developer.hashicorp.com/vault)
-- Announcement list: [Google Groups](https://groups.google.com/group/hashicorp-announce)
-- Discussion forum: [Discuss](https://discuss.hashicorp.com/c/vault)
-- Documentation: [https://developer.hashicorp.com/vault/docs](https://developer.hashicorp.com/vault/docs)
-- Tutorials: [https://developer.hashicorp.com/vault/tutorials](https://developer.hashicorp.com/vault/tutorials)
-- Certification exam: [https://developer.hashicorp.com/certifications/security-automation](https://developer.hashicorp.com/certifications/security-automation)
-- Documentation source: [https://github.com/hashicorp/web-unified-docs](https://github.com/hashicorp/web-unified-docs)
+## What's new
 
-<img width="300" alt="Vault Logo" src="https://github.com/hashicorp/vault/blob/f22d202cde2018f9455dec755118a9b84586e082/Vault_PrimaryLogo_Black.png">
+Vault OSS has no built-in way to require a human to approve a credential request before it is issued. This fork adds that capability end-to-end: backend engine, REST API, and a full UI built into the existing Vault web interface.
 
-Vault is a tool for securely accessing secrets. A secret is anything that you want to tightly control access to, such as API keys, passwords, certificates, and more. Vault provides a unified interface to any secret, while providing tight access control and recording a detailed audit log.
+When a user requests a database credential that is covered by an approval rule, their request is **intercepted before it reaches the backend plugin**. An approver reviews it and either approves or denies it. If approved, the credential is generated and stored securely — the requester has 90 minutes to retrieve it once, after which it is permanently deleted.
 
-A modern system requires access to a multitude of secrets: database credentials, API keys for external services, credentials for service-oriented architecture communication, etc. Understanding who is accessing what secrets is already very difficult and platform-specific. Adding on key rolling, secure storage, and detailed audit logs is almost impossible without a custom solution. This is where Vault steps in.
+<!-- GIF: full approval flow walkthrough -->
 
-The key features of Vault are:
+---
 
-* **Secure Secret Storage**: Vault can store arbitrary key/value pairs. Vault encrypts data before writing it to persistent
-  storage, so gaining access to the raw storage isn't enough to access
-  your secrets. Vault can write to disk, [Consul](https://www.consul.io),
-  and more.
+## How it works
 
-* **Dynamic Secrets**: Vault can generate secrets on-demand for some
-  systems, such as AWS or SQL databases. For example, when an application
-  needs to access an S3 bucket, it asks Vault for credentials, and Vault
-  will generate an AWS keypair with valid permissions on demand. After
-  creating these dynamic secrets, Vault will also automatically revoke them
-  after the lease is up.
+### 1. Create an approval rule
 
-* **Data Encryption**: Vault can encrypt and decrypt data without storing
-  it. This allows security teams to define encryption parameters and
-  developers to store encrypted data in a location such as a SQL database without
-  having to design their own encryption methods.
+An admin creates a rule that defines which Vault paths to intercept, who is allowed to approve requests, and how many approvals are needed.
 
-* **Leasing and Renewal**: Vault associates a **lease** with each secret.
-  At the end of the lease, Vault automatically revokes the
-  secret. Clients are able to renew leases via built-in renew APIs.
-
-* **Revocation**: Vault has built-in support for secret revocation. Vault
-  can revoke not only single secrets, but a tree of secrets, for example,
-  all secrets read by a specific user, or all secrets of a particular type.
-  Revocation assists in key rolling as well as locking down systems in the
-  case of an intrusion.
-
-Documentation, Getting Started, and Certification Exams
--------------------------------
-
-Documentation is available on the [Vault website](https://developer.hashicorp.com/vault/docs).
-
-If you're new to Vault and want to get started with security automation, please
-check out our [Getting Started guides](https://learn.hashicorp.com/collections/vault/getting-started)
-on HashiCorp's learning platform. There are also [additional guides](https://learn.hashicorp.com/vault)
-to continue your learning.
-
-For examples of how to interact with Vault from inside your application in different programming languages, see the [vault-examples](https://github.com/hashicorp/vault-examples) repo. An out-of-the-box [sample application](https://github.com/hashicorp/hello-vault-go) is also available.
-
-Show off your Vault knowledge by passing a certification exam. Visit the
-[certification page](https://www.hashicorp.com/certification/#hashicorp-certified-vault-associate)
-for information about exams and find [study materials](https://learn.hashicorp.com/collections/vault/certification)
-on HashiCorp's learning platform.
-
-Developing Vault
---------------------
-
-If you wish to work on Vault itself or any of its built-in systems, you'll
-first need [Go](https://www.golang.org) installed on your machine.
-
-For local dev first make sure Go is properly installed, including setting up a
-[GOPATH](https://golang.org/doc/code.html#GOPATH), then setting the 
-[GOBIN](https://pkg.go.dev/cmd/go#hdr-Environment_variables) variable to `$GOPATH/bin`. 
-Ensure that `$GOPATH/bin` is in your path as some distributions bundle the old version 
-of build tools. 
-
-Next, clone this repository. Vault uses [Go Modules](https://github.com/golang/go/wiki/Modules),
-so it is recommended that you clone the repository ***outside*** of the GOPATH.
-You can then download any required build tools by bootstrapping your environment:
-
-```sh
-$ make bootstrap
-...
+**Via API:**
+```bash
+vault write sys/approvals/config/my-rule \
+  target_mount_path="database/creds/*" \
+  authorized_approvers="<oidc-entity-id-1>,<oidc-entity-id-2>" \
+  approvals_required=1 \
+  description="All database dynamic credentials require approval" \
+  slack_webhook_url="https://hooks.slack.com/services/..."
 ```
 
-To compile a development version of Vault, run `make` or `make dev`. This will
-put the Vault binary in the `bin` and `$GOPATH/bin` folders:
+**Via UI:** Access → Approval rules → Create rule
 
-```sh
-$ make dev
-...
-$ bin/vault
-...
+<!-- GIF: creating a rule in the UI -->
+
+`target_mount_path` supports:
+- Exact path: `database/creds/readonly`
+- Wildcard: `database/creds/*`
+- All paths: `*`
+
+---
+
+### 2. User requests a credential
+
+When a user navigates to a database role that is covered by a rule, instead of credentials being issued immediately they are shown a **justification form**. They enter a reason (visible to approvers), submit the request, and the page begins polling automatically.
+
+<!-- GIF: user submitting a request with justification -->
+
+Behind the scenes, the request is intercepted in `handleRequest` before it ever reaches the database plugin. A pending record is stored with the full original request, the requester's identity, and the justification. The user cannot submit a duplicate request while one is already pending.
+
+---
+
+### 3. Approver reviews the request
+
+Approvers see all pending requests under **Access → Pending requests**. Each row shows the requester's name, the target path, the justification, and when the request expires. Approvers can approve or deny with one click.
+
+<!-- GIF: approver reviewing and approving a request -->
+
+**Via API:**
+```bash
+# Approve
+vault write sys/approvals/approve/<request-id>
+
+# Deny
+vault write sys/approvals/deny/<request-id>
 ```
 
-To compile a development version of Vault with the UI, run `make static-dist dev-ui`. This will
-put the Vault binary in the `bin` and `$GOPATH/bin` folders:
+Rules enforce **Separation of Duties** — a requester cannot approve their own request (configurable per rule via `allow_self_approval`). Multi-approver workflows are supported via `approvals_required`.
 
-```sh
-$ make static-dist dev-ui
-...
-$ bin/vault
-...
+When the approval threshold is met, Vault **re-executes the original request internally** and stores the generated credential against the pending record.
+
+---
+
+### 4. Requester retrieves the credential
+
+Once approved, the requester's **My requests** page shows a "Reveal Secret" button. Clicking it fetches the credential, displays it once with a copy button, and **immediately deletes it from storage** (burn after read). There is a 90-minute window after approval to retrieve it.
+
+<!-- GIF: requester revealing and copying their credential -->
+
+**Via API:**
+```bash
+vault read sys/approvals/fetch/<request-id>
 ```
 
-To run tests, type `make test`. Note: this requires Docker to be installed. If
-this exits with exit status 0, then everything is working!
+---
 
-```sh
-$ make test
-...
+### 5. History
+
+Both the approver view and the requester's My requests page show a **7-day history** of resolved requests (retrieved, denied, expired). Entries are automatically purged after 7 days.
+
+<!-- GIF: history table -->
+
+---
+
+## Slack notifications
+
+When a request is intercepted and a Slack webhook URL is configured on the rule, a notification is sent immediately to the configured channel:
+
+```
+@here [Vault] Credential Request Pending Approval
+Requester: jane.doe
+Justification: "Need read access for incident investigation"
+Path: database/creds/readonly
+Rule: db-approvals
+Request ID: 4cd97bc8-...
+Requires: 1 approval
+Authorized approvers: john.smith, jane.doe
+Expires: 2025-05-19 21:00:00 UTC
+
+To approve:  vault write sys/approvals/approve/4cd97bc8-...
+To deny:     vault write sys/approvals/deny/4cd97bc8-...
 ```
 
-If you're developing a specific package, you can run tests for just that
-package by specifying the `TEST` variable. For example below, only
-`vault` package tests will be run.
+Approver names are resolved from their OIDC display names. Email addresses are shortened to the username part (`john.smith@company.com` → `john.smith`). The channel receives an `@here` ping so approvers are notified immediately.
 
-```sh
-$ make test TEST=./vault
-...
-```
+---
 
-### Troubleshooting
+## Security design
 
-If you encounter an error like `could not read Username for 'https://github.com'` you may need to adjust your git config like so:
+- **Server-side enforcement**: the interceptor lives in `handleRequest`, before any plugin dispatch. The UI hint (`requires-approval`) is purely for UX — the backend enforces approval regardless.
+- **Burn after read**: credentials are stored in the pending record and deleted on first fetch. A tombstone is written before deletion to close the TOCTOU window.
+- **IDOR protection**: only the requester can fetch their own credential; only authorized approvers can read, approve, or deny others' requests.
+- **Separation of Duties**: requesters cannot approve their own requests (unless explicitly allowed per rule).
+- **Deduplication**: one active pending or unread approved request per user per path.
+- **Header safety**: `X-Vault-Token`, `Authorization`, `X-Vault-Wrap-TTL`, `X-Vault-Namespace`, and `X-Vault-MFA` are stripped from stored headers before re-execution.
+- **Justification sanitization**: control characters and Slack special characters (`<`, `>`, `&`) are escaped before storage and notification.
+- **SSRF protection**: `slack_webhook_url` must use `https://`.
 
-```sh
-$ git config --global --add url."git@github.com:".insteadOf "https://github.com/"
-```
+---
 
+## API reference
 
-### Importing Vault
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `sys/approvals/config/:rule_id` | Create or update an approval rule |
+| `GET` | `sys/approvals/config/:rule_id` | Read a rule |
+| `DELETE` | `sys/approvals/config/:rule_id` | Delete a rule (cascades to pending requests) |
+| `LIST` | `sys/approvals/config` | List all rule IDs |
+| `GET` | `sys/approvals/requires-approval?path=...` | Check if a path is covered by a rule |
+| `GET` | `sys/approvals/my-requests` | List the caller's own requests + 7-day history |
+| `GET` | `sys/approvals/approvable` | List requests the caller can approve |
+| `POST` | `sys/approvals/approve/:id` | Approve a pending request |
+| `POST` | `sys/approvals/deny/:id` | Deny a pending request |
+| `GET` | `sys/approvals/fetch/:id` | Poll for / retrieve an approved credential |
+| `GET` | `sys/approvals/history` | 7-day resolved history (approvers / root only) |
 
-This repository publishes two libraries that may be imported by other projects:
-`github.com/hashicorp/vault/api` and `github.com/hashicorp/vault/sdk`.
+---
 
-Note that this repository also contains Vault (the product), and as with most Go
-projects, Vault uses Go modules to manage its dependencies. The mechanism to do
-that is the [go.mod](./go.mod) file. As it happens, the presence of that file
-also makes it theoretically possible to import Vault as a dependency into other
-projects. Some other projects have made a practice of doing so in order to take
-advantage of testing tooling that was developed for testing Vault itself. This
-is not, and has never been, a supported way to use the Vault project. We aren't 
-likely to fix bugs relating to failure to import `github.com/hashicorp/vault` 
-into your project.
-
-See also the section "Docker-based tests" below.
-
-### Acceptance Tests
-
-Vault has comprehensive [acceptance tests](https://en.wikipedia.org/wiki/Acceptance_testing)
-covering most of the features of the secret and auth methods.
-
-If you're working on a feature of a secret or auth method and want to
-verify it is functioning (and also hasn't broken anything else), we recommend
-running the acceptance tests.
-
-**Warning:** The acceptance tests create/destroy/modify *real resources*, which
-may incur real costs in some cases. In the presence of a bug, it is technically
-possible that broken backends could leave dangling data behind. Therefore,
-please run the acceptance tests at your own risk. At the very least,
-we recommend running them in their own private account for whatever backend
-you're testing.
-
-To run the acceptance tests, invoke `make testacc`:
-
-```sh
-$ make testacc TEST=./builtin/logical/consul
-...
-```
-
-The `TEST` variable is required, and you should specify the folder where the
-backend is. The `TESTARGS` variable is recommended to filter down to a specific
-resource to test, since testing all of them at once can sometimes take a very
-long time.
-
-Acceptance tests typically require other environment variables to be set for
-things such as access keys. The test itself should error early and tell
-you what to set, so it is not documented here.
-
-For more information on Vault Enterprise features, visit the [Vault Enterprise site](https://www.hashicorp.com/products/vault/?utm_source=github&utm_medium=referral&utm_campaign=github-vault-enterprise).
-
-### Docker-based Tests
-
-We have created an experimental new testing mechanism inspired by NewTestCluster.
-An example of how to use it:
-
-```go
-import (
-  "testing"
-  "github.com/hashicorp/vault/sdk/helper/testcluster/docker"
-)
-
-func Test_Something_With_Docker(t *testing.T) {
-  opts := &docker.DockerClusterOptions{
-    ImageRepo: "hashicorp/vault", // or "hashicorp/vault-enterprise"
-    ImageTag:    "latest",
-  }
-  cluster := docker.NewTestDockerCluster(t, opts)
-  defer cluster.Cleanup()
-  
-  client := cluster.Nodes()[0].APIClient()
-  _, err := client.Logical().Read("sys/storage/raft/configuration")
-  if err != nil {
-    t.Fatal(err)
-  }
-}
-```
-
-Or for Enterprise:
-
-```go
-import (
-  "testing"
-  "github.com/hashicorp/vault/sdk/helper/testcluster/docker"
-)
-
-func Test_Something_With_Docker(t *testing.T) {
-  opts := &docker.DockerClusterOptions{
-    ImageRepo: "hashicorp/vault-enterprise",
-    ImageTag:  "latest",
-	VaultLicense: licenseString, // not a path, the actual license bytes
-  }
-  cluster := docker.NewTestDockerCluster(t, opts)
-  defer cluster.Cleanup()
-}
-```
-
-Here is a more realistic example of how we use it in practice.  DefaultOptions uses 
-`hashicorp/vault`:`latest` as the repo and tag, but it also looks at the environment
-variable VAULT_BINARY. If populated, it will copy the local file referenced by
-VAULT_BINARY into the container. This is useful when testing local changes.
-
-Instead of setting the VaultLicense option, you can set the VAULT_LICENSE_CI environment
-variable, which is better than committing a license to version control.
-
-Optionally you can set COMMIT_SHA, which will be appended to the image name we
-build as a debugging convenience.
-
-```go
-func Test_Custom_Build_With_Docker(t *testing.T) {
-  opts := docker.DefaultOptions(t)
-  cluster := docker.NewTestDockerCluster(t, opts)
-  defer cluster.Cleanup()
-}
-```
-
-There are a variety of helpers in the `github.com/hashicorp/vault/sdk/helper/testcluster`
-package, e.g. these tests below will create a pair of 3-node clusters and link them using
-PR or DR replication respectively, and fail if the replication state doesn't become healthy
-before the passed context expires.
-
-Again, as written, these depend on having a Vault Enterprise binary locally and the env
-var VAULT_BINARY set to point to it, as well as having VAULT_LICENSE_CI set.
-
-```go
-func TestStandardPerfReplication_Docker(t *testing.T) {
-  opts := docker.DefaultOptions(t)
-  r, err := docker.NewReplicationSetDocker(t, opts)
-  if err != nil {
-      t.Fatal(err)
-  }
-  defer r.Cleanup()
-
-  ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-  defer cancel()
-  err = r.StandardPerfReplication(ctx)
-  if err != nil {
-    t.Fatal(err)
-  }
-}
-
-func TestStandardDRReplication_Docker(t *testing.T) {
-  opts := docker.DefaultOptions(t)
-  r, err := docker.NewReplicationSetDocker(t, opts)
-  if err != nil {
-    t.Fatal(err)
-  }
-  defer r.Cleanup()
-
-  ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-  defer cancel()
-  err = r.StandardDRReplication(ctx)
-  if err != nil {
-    t.Fatal(err)
-  }
-}
-```
-
-Finally, here's an example of running an existing OSS docker test with a custom binary:
+## Building
 
 ```bash
-$ GOOS=linux make dev
-$ VAULT_BINARY=$(pwd)/bin/vault go test -run 'TestRaft_Configuration_Docker' ./vault/external_tests/raft/raft_binary
-ok      github.com/hashicorp/vault/vault/external_tests/raft/raft_binary        20.960s
+# UI
+cd ui && npm install && npm run build && cd ..
+
+# Go binary (Linux amd64)
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags "vault ui" -ldflags "-s -w" -o vault .
 ```
+
+---
+
+## License
+
+This fork inherits the [Business Source License 1.1](LICENSE) from HashiCorp Vault. The approval workflow additions are copyright cavadalizada 2025, also under BUSL-1.1. You may use, modify, and distribute the source freely. You may not use it to offer a competing commercial Vault service.
+
+---
+
+*Based on HashiCorp Vault — https://github.com/hashicorp/vault*
