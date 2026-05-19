@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/go-secure-stdlib/strutil"
-	"github.com/hashicorp/vault/sdk/database/dbplugin/v5"
+	dbplugin "github.com/hashicorp/vault/sdk/database/dbplugin/v5"
 	v5 "github.com/hashicorp/vault/sdk/database/dbplugin/v5"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
@@ -66,6 +66,132 @@ func pathCredsCreate(b *databaseBackend) []*framework.Path {
 	}
 }
 
+// credGenResult holds the output of generateDynamicCred before the Vault lease is registered.
+type credGenResult struct {
+	respData   map[string]interface{}
+	internal   map[string]interface{}
+	defaultTTL time.Duration
+	maxTTL     time.Duration
+}
+
+// generateDynamicCred performs the full database user creation for a dynamic role and
+// returns the credential data without registering a Vault lease. Callers are responsible
+// for wrapping the result in b.Secret(SecretCredsType).Response(...).
+//
+// It is called by both pathCredsCreateRead (normal flow) and handleApprovalApprove
+// (approval flow) so the generation logic lives in one place.
+func (b *databaseBackend) generateDynamicCred(ctx context.Context, s logical.Storage, roleName, displayName string) (*credGenResult, error) {
+	role, err := b.Role(ctx, s, roleName)
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
+		return nil, fmt.Errorf("unknown role: %s", roleName)
+	}
+
+	dbConfig, err := b.DatabaseConfig(ctx, s, role.DBName)
+	if err != nil {
+		return nil, err
+	}
+
+	if !strutil.StrListContains(dbConfig.AllowedRoles, "*") && !strutil.StrListContainsGlob(dbConfig.AllowedRoles, roleName) {
+		return nil, fmt.Errorf("%q is not an allowed role", roleName)
+	}
+
+	if !dbConfig.SupportsCredentialType(role.CredentialType) {
+		return nil, fmt.Errorf("unsupported credential_type: %q", role.CredentialType.String())
+	}
+
+	dbi, err := b.GetConnection(ctx, s, role.DBName)
+	if err != nil {
+		return nil, err
+	}
+
+	dbi.RLock()
+	defer dbi.RUnlock()
+
+	ttl, _, err := framework.CalculateTTL(b.System(), 0, role.DefaultTTL, 0, role.MaxTTL, 0, time.Time{})
+	if err != nil {
+		return nil, err
+	}
+	expiration := time.Now().Add(ttl).Add(5 * time.Second)
+
+	newUserReq := v5.NewUserRequest{
+		UsernameConfig: v5.UsernameMetadata{
+			DisplayName: displayName,
+			RoleName:    roleName,
+		},
+		Statements: v5.Statements{
+			Commands: role.Statements.Creation,
+		},
+		RollbackStatements: v5.Statements{
+			Commands: role.Statements.Rollback,
+		},
+		Expiration: expiration,
+	}
+
+	respData := make(map[string]interface{})
+
+	switch role.CredentialType {
+	case v5.CredentialTypePassword:
+		password, err := b.generateNewPassword(ctx, role.CredentialConfig, dbConfig.PasswordPolicy, dbi)
+		if err != nil {
+			return nil, err
+		}
+		newUserReq.CredentialType = v5.CredentialTypePassword
+		newUserReq.Password = password
+
+	case v5.CredentialTypeRSAPrivateKey:
+		public, private, err := b.generateNewKeypair(role.CredentialConfig)
+		if err != nil {
+			return nil, err
+		}
+		newUserReq.CredentialType = v5.CredentialTypeRSAPrivateKey
+		newUserReq.PublicKey = public
+		respData["rsa_private_key"] = string(private)
+
+	case v5.CredentialTypeClientCertificate:
+		generator, err := newClientCertificateGenerator(role.CredentialConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to construct credential generator: %s", err)
+		}
+		cb, subject, err := generator.generate(b.GetRandomReader(), expiration, newUserReq.UsernameConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate client certificate: %w", err)
+		}
+		newUserReq.CredentialType = dbplugin.CredentialTypeClientCertificate
+		newUserReq.Subject = subject
+		respData["client_certificate"] = cb.Certificate
+		respData["private_key"] = cb.PrivateKey
+		respData["private_key_type"] = cb.PrivateKeyType
+	}
+
+	newUserResp, password, err := dbi.database.NewUser(ctx, newUserReq)
+	if err != nil {
+		b.CloseIfShutdown(dbi, err)
+		return nil, err
+	}
+
+	respData["username"] = newUserResp.Username
+	if role.CredentialType == v5.CredentialTypePassword {
+		respData["password"] = password
+	}
+
+	internal := map[string]interface{}{
+		"username":              newUserResp.Username,
+		"role":                  roleName,
+		"db_name":               role.DBName,
+		"revocation_statements": role.Statements.Revocation,
+	}
+
+	return &credGenResult{
+		respData:   respData,
+		internal:   internal,
+		defaultTTL: role.DefaultTTL,
+		maxTTL:     role.MaxTTL,
+	}, nil
+}
+
 func (b *databaseBackend) pathCredsCreateRead() framework.OperationFunc {
 	return func(ctx context.Context, req *logical.Request, data *framework.FieldData) (resp *logical.Response, err error) {
 		name := data.Get("name").(string)
@@ -78,7 +204,7 @@ func (b *databaseBackend) pathCredsCreateRead() framework.OperationFunc {
 			}
 		}()
 
-		// Get the role
+		// Get the role first — needed for both the approval intercept and generation.
 		role, err := b.Role(ctx, req.Storage, name)
 		if err != nil {
 			return nil, err
@@ -100,131 +226,17 @@ func (b *databaseBackend) pathCredsCreateRead() framework.OperationFunc {
 					AdditionalDatabaseMetadata{key: "role_name", value: name},
 					AdditionalDatabaseMetadata{key: "credential_type", value: credType.String()})
 			}
-		}(&role.CredentialType) // argument is evaluated now, but since it's a pointer should refer correctly to updated values
+		}(&role.CredentialType)
 
-		dbConfig, err := b.DatabaseConfig(ctx, req.Storage, role.DBName)
+		result, err := b.generateDynamicCred(ctx, req.Storage, name, req.DisplayName)
 		if err != nil {
-			return nil, err
-		}
-
-		// If role name isn't in the database's allowed roles, send back a
-		// permission denied.
-		if !strutil.StrListContains(dbConfig.AllowedRoles, "*") && !strutil.StrListContainsGlob(dbConfig.AllowedRoles, name) {
-			return nil, fmt.Errorf("%q is not an allowed role", name)
-		}
-
-		// If the plugin doesn't support the credential type, return an error
-		if !dbConfig.SupportsCredentialType(role.CredentialType) {
-			return logical.ErrorResponse("unsupported credential_type: %q",
-				role.CredentialType.String()), nil
-		}
-
-		// Get the Database object
-		dbi, err := b.GetConnection(ctx, req.Storage, role.DBName)
-		if err != nil {
-			return nil, err
-		}
-
-		dbi.RLock()
-		defer dbi.RUnlock()
-
-		ttl, _, err := framework.CalculateTTL(b.System(), 0, role.DefaultTTL, 0, role.MaxTTL, 0, time.Time{})
-		if err != nil {
-			return nil, err
-		}
-		expiration := time.Now().Add(ttl)
-		// Adding a small buffer since the TTL will be calculated again after this call
-		// to ensure the database credential does not expire before the lease
-		expiration = expiration.Add(5 * time.Second)
-
-		newUserReq := v5.NewUserRequest{
-			UsernameConfig: v5.UsernameMetadata{
-				DisplayName: req.DisplayName,
-				RoleName:    name,
-			},
-			Statements: v5.Statements{
-				Commands: role.Statements.Creation,
-			},
-			RollbackStatements: v5.Statements{
-				Commands: role.Statements.Rollback,
-			},
-			Expiration: expiration,
-		}
-
-		respData := make(map[string]interface{})
-
-		// Generate the credential based on the role's credential type
-		switch role.CredentialType {
-		case v5.CredentialTypePassword:
-			password, err := b.generateNewPassword(ctx, role.CredentialConfig, dbConfig.PasswordPolicy, dbi)
-			if err != nil {
-				return nil, err
-			}
-
-			// Set input credential
-			newUserReq.CredentialType = v5.CredentialTypePassword
-			newUserReq.Password = password
-
-		case v5.CredentialTypeRSAPrivateKey:
-			public, private, err := b.generateNewKeypair(role.CredentialConfig)
-			if err != nil {
-				return nil, err
-			}
-
-			// Set input credential
-			newUserReq.CredentialType = v5.CredentialTypeRSAPrivateKey
-			newUserReq.PublicKey = public
-
-			// Set output credential
-			respData["rsa_private_key"] = string(private)
-		case v5.CredentialTypeClientCertificate:
-			generator, err := newClientCertificateGenerator(role.CredentialConfig)
-			if err != nil {
-				return nil, fmt.Errorf("failed to construct credential generator: %s", err)
-			}
-
-			// Generate the client certificate
-			cb, subject, err := generator.generate(b.GetRandomReader(), expiration,
-				newUserReq.UsernameConfig)
-			if err != nil {
-				return nil, fmt.Errorf("failed to generate client certificate: %w", err)
-			}
-
-			// Set input credential
-			newUserReq.CredentialType = dbplugin.CredentialTypeClientCertificate
-			newUserReq.Subject = subject
-
-			// Set output credential
-			respData["client_certificate"] = cb.Certificate
-			respData["private_key"] = cb.PrivateKey
-			respData["private_key_type"] = cb.PrivateKeyType
-		}
-
-		// Overwriting the password in the event this is a legacy database
-		// plugin and the provided password is ignored
-		newUserResp, password, err := dbi.database.NewUser(ctx, newUserReq)
-		if err != nil {
-			b.CloseIfShutdown(dbi, err)
 			return nil, err
 		}
 		modified = true
-		respData["username"] = newUserResp.Username
 
-		// Database plugins using the v4 interface generate and return the password.
-		// Set the password response to what is returned by the NewUser request.
-		if role.CredentialType == v5.CredentialTypePassword {
-			respData["password"] = password
-		}
-
-		internal := map[string]interface{}{
-			"username":              newUserResp.Username,
-			"role":                  name,
-			"db_name":               role.DBName,
-			"revocation_statements": role.Statements.Revocation,
-		}
-		resp = b.Secret(SecretCredsType).Response(respData, internal)
-		resp.Secret.TTL = role.DefaultTTL
-		resp.Secret.MaxTTL = role.MaxTTL
+		resp = b.Secret(SecretCredsType).Response(result.respData, result.internal)
+		resp.Secret.TTL = result.defaultTTL
+		resp.Secret.MaxTTL = result.maxTTL
 		return resp, nil
 	}
 }
