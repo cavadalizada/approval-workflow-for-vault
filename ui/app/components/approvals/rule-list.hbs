@@ -1,0 +1,137 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+<Page::Header @title="Approval rules">
+  <:breadcrumbs>
+    <Page::Breadcrumbs
+      @breadcrumbs={{array
+        (hash label="Vault" route="vault.cluster.dashboard" icon="vault")
+        (hash label="Access" route="vault.cluster.access.methods")
+        (hash label="Approval rules")
+      }}
+    />
+  </:breadcrumbs>
+  <:description>
+    Approval rules intercept secret requests and require one or more authorized approvers before
+    the credential is generated. Uses Vault entity IDs from your OIDC auth method.
+  </:description>
+  <:actions>
+    <Hds::Button
+      @text="Create rule"
+      @icon="plus"
+      @route="vault.cluster.access.approvals.create"
+      data-test-button="create-approval-rule"
+    />
+    <Hds::Button
+      @text="Pending requests"
+      @color="secondary"
+      @route="vault.cluster.access.approvals.requests"
+      data-test-button="pending-requests"
+    />
+  </:actions>
+</Page::Header>
+
+{{#if (eq @rules.length 0)}}
+  <Hds::ApplicationState data-test-approval-rules-empty as |A|>
+    <A.Header @title="No approval rules configured" />
+    <A.Body @text="Create a rule to require human approval before credentials are generated on a specific path." />
+    <A.Footer as |F|>
+      <F.LinkStandalone
+        @icon="plus"
+        @text="Create your first rule"
+        @route="vault.cluster.access.approvals.create"
+      />
+    </A.Footer>
+  </Hds::ApplicationState>
+{{else}}
+  <Hds::Table
+    @caption="Approval rules"
+    data-test-approval-rules-table
+  >
+    <:head as |H|>
+      <H.Tr>
+        <H.Th>Rule ID</H.Th>
+        <H.Th>Target path</H.Th>
+        <H.Th>Approvals required</H.Th>
+        <H.Th>Description</H.Th>
+        <H.Th></H.Th>
+      </H.Tr>
+    </:head>
+    <:body as |B|>
+      {{#each @rules as |rule|}}
+        <B.Tr data-test-approval-rule-row={{rule.id}}>
+          <B.Td>
+            <LinkTo
+              @route="vault.cluster.access.approvals.rule"
+              @model={{rule.id}}
+              class="has-text-weight-semibold"
+              data-test-approval-rule-id={{rule.id}}
+            >
+              {{rule.id}}
+            </LinkTo>
+          </B.Td>
+          <B.Td>
+            <code>{{rule.targetMountPath}}</code>
+          </B.Td>
+          <B.Td>{{rule.approvalsRequired}}</B.Td>
+          <B.Td class="has-text-grey">
+            {{if rule.description rule.description "—"}}
+          </B.Td>
+          <B.Td>
+            <Hds::Dropdown @isInline={{true}} @listPosition="bottom-right" as |dd|>
+              <dd.ToggleIcon
+                @icon="more-horizontal"
+                @text="Actions for rule {{rule.id}}"
+                data-test-popup-menu-trigger={{rule.id}}
+              />
+              <dd.Interactive
+                @route="vault.cluster.access.approvals.rule"
+                @model={{rule.id}}
+                @text="Details"
+              />
+              <dd.Interactive
+                @color="critical"
+                @text="Delete"
+                {{on "click" (fn this.confirmDelete rule)}}
+                data-test-delete-rule={{rule.id}}
+              />
+            </Hds::Dropdown>
+          </B.Td>
+        </B.Tr>
+      {{/each}}
+    </:body>
+  </Hds::Table>
+{{/if}}
+
+{{#if this.deleteTarget}}
+  <Hds::Modal
+    id="confirm-delete-rule"
+    @color="critical"
+    @onClose={{this.cancelDelete}}
+    data-test-confirm-delete-modal
+    as |M|
+  >
+    <M.Header>Delete approval rule?</M.Header>
+    <M.Body>
+      <p>
+        Rule
+        <strong>{{this.deleteTarget.id}}</strong>
+        will be permanently deleted. Any in-flight requests against this rule will be orphaned.
+      </p>
+    </M.Body>
+    <M.Footer as |F|>
+      <Hds::ButtonSet>
+        <Hds::Button
+          @text={{if this.isDeleting "Deleting…" "Delete"}}
+          @color="critical"
+          @isLoading={{this.isDeleting}}
+          {{on "click" this.deleteRule}}
+          data-test-confirm-delete-button
+        />
+        <Hds::Button @text="Cancel" @color="secondary" {{on "click" F.close}} />
+      </Hds::ButtonSet>
+    </M.Footer>
+  </Hds::Modal>
+{{/if}}

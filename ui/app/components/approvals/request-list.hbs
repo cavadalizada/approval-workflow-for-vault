@@ -1,0 +1,158 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+<Page::Header @title="Pending approval requests">
+  <:breadcrumbs>
+    <Page::Breadcrumbs
+      @breadcrumbs={{array
+        (hash label="Vault" route="vault.cluster.dashboard" icon="vault")
+        (hash label="Access" route="vault.cluster.access.methods")
+        (hash label="Approval rules" route="vault.cluster.access.approvals")
+        (hash label="Pending requests")
+      }}
+    />
+  </:breadcrumbs>
+  <:description>
+    Approve or deny credential requests that are waiting on human authorization.
+    Approving executes the original request and stores the credential for the requester to retrieve.
+  </:description>
+  <:actions>
+    <Hds::Button
+      @text="Refresh"
+      @color="secondary"
+      @icon="reload"
+      {{on "click" @onAction}}
+      data-test-refresh-requests
+    />
+  </:actions>
+</Page::Header>
+
+{{#if (eq @requests.length 0)}}
+  <Hds::ApplicationState data-test-requests-empty as |A|>
+    <A.Header @title="No approval requests" />
+    <A.Body @text="Requests will appear here when a user accesses a path covered by an approval rule." />
+  </Hds::ApplicationState>
+{{else}}
+
+  {{#if this.pendingRequests.length}}
+    <h2 class="title is-5 has-top-margin-m">Awaiting approval ({{this.pendingRequests.length}})</h2>
+    <Hds::Table
+      @caption="Pending requests"
+      data-test-pending-requests-table
+    >
+      <:head as |H|>
+        <H.Tr>
+          <H.Th>Request ID</H.Th>
+          <H.Th>Requester</H.Th>
+          <H.Th>Path</H.Th>
+          <H.Th>Justification</H.Th>
+          <H.Th>Rule</H.Th>
+          <H.Th>Approvals</H.Th>
+          <H.Th>Expires</H.Th>
+          <H.Th>Actions</H.Th>
+        </H.Tr>
+      </:head>
+      <:body as |B|>
+        {{#each this.pendingRequests as |req|}}
+          <B.Tr data-test-request-row={{req.id}}>
+            <B.Td>
+              <Hds::Copy::Snippet @textToCopy={{req.id}} @color="secondary" />
+            </B.Td>
+            <B.Td>
+              <span title={{req.requesterEntityId}}>
+                {{if req.requesterDisplayName req.requesterDisplayName req.requesterEntityId}}
+              </span>
+            </B.Td>
+            <B.Td><code>{{req.originalPath}}</code></B.Td>
+            <B.Td>
+              {{#if req.justification}}
+                <span title={{req.justification}} style="display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">
+                  {{req.justification}}
+                </span>
+              {{else}}
+                <span class="has-text-grey">—</span>
+              {{/if}}
+            </B.Td>
+            <B.Td>{{req.ruleId}}</B.Td>
+            <B.Td>{{req.approvals.length}}</B.Td>
+            <B.Td>{{req.expiresAt}}</B.Td>
+            <B.Td>
+              <Hds::ButtonSet>
+                <Hds::Button
+                  @text={{if (eq (get this.rowState req.id) "approving") "Approving…" "Approve"}}
+                  @color="primary"
+                  @size="small"
+                  @isLoading={{eq (get this.rowState req.id) "approving"}}
+                  disabled={{or
+                    (eq (get this.rowState req.id) "approving")
+                    (eq (get this.rowState req.id) "denying")
+                  }}
+                  {{on "click" (fn this.approve req)}}
+                  data-test-approve={{req.id}}
+                />
+                <Hds::Button
+                  @text={{if (eq (get this.rowState req.id) "denying") "Denying…" "Deny"}}
+                  @color="critical"
+                  @size="small"
+                  @isLoading={{eq (get this.rowState req.id) "denying"}}
+                  disabled={{or
+                    (eq (get this.rowState req.id) "approving")
+                    (eq (get this.rowState req.id) "denying")
+                  }}
+                  {{on "click" (fn this.deny req)}}
+                  data-test-deny={{req.id}}
+                />
+              </Hds::ButtonSet>
+            </B.Td>
+          </B.Tr>
+        {{/each}}
+      </:body>
+    </Hds::Table>
+  {{/if}}
+
+  {{#if this.resolvedRequests.length}}
+    <h2 class="title is-5 has-top-margin-l">Recently resolved ({{this.resolvedRequests.length}})</h2>
+    <Hds::Table
+      @caption="Resolved requests"
+      data-test-resolved-requests-table
+    >
+      <:head as |H|>
+        <H.Tr>
+          <H.Th>Request ID</H.Th>
+          <H.Th>Requester</H.Th>
+          <H.Th>Path</H.Th>
+          <H.Th>Status</H.Th>
+          <H.Th>Created</H.Th>
+        </H.Tr>
+      </:head>
+      <:body as |B|>
+        {{#each this.resolvedRequests as |req|}}
+          <B.Tr data-test-resolved-row={{req.id}}>
+            <B.Td><code>{{req.id}}</code></B.Td>
+            <B.Td>
+              {{if req.requesterDisplayName req.requesterDisplayName req.requesterEntityId}}
+            </B.Td>
+            <B.Td><code>{{req.originalPath}}</code></B.Td>
+            <B.Td>
+              {{#if (eq req.status "retrieved")}}
+                <Hds::Badge @text="Retrieved" @color="success" @icon="check-circle" />
+              {{else if (eq req.status "approved")}}
+                <Hds::Badge @text="Approved" @color="success" @icon="check-circle" />
+              {{else if (eq req.status "denied")}}
+                <Hds::Badge @text="Denied" @color="critical" @icon="x-circle" />
+              {{else if (eq req.status "expired")}}
+                <Hds::Badge @text="Expired" @color="neutral" @icon="clock" />
+              {{else}}
+                <Hds::Badge @text={{req.status}} @color="neutral" />
+              {{/if}}
+            </B.Td>
+            <B.Td>{{if req.resolvedAt req.resolvedAt req.createdAt}}</B.Td>
+          </B.Tr>
+        {{/each}}
+      </:body>
+    </Hds::Table>
+  {{/if}}
+
+{{/if}}

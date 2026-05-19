@@ -1,0 +1,93 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+<Page::Header @title="Credential Approval Requests">
+  <:actions>
+    <Hds::Button
+      @text="Refresh"
+      @color="secondary"
+      @icon="reload"
+      @iconPosition="leading"
+      {{on "click" this.loadRequests}}
+      data-test-approvals-refresh
+    />
+  </:actions>
+</Page::Header>
+
+{{#if this.fetchError}}
+  <Hds::Alert @type="inline" @color="critical" class="has-top-bottom-margin" data-test-approvals-error as |A|>
+    <A.Title>Error</A.Title>
+    <A.Description>{{this.fetchError}}</A.Description>
+  </Hds::Alert>
+{{/if}}
+
+{{#if this.isLoading}}
+  <div class="has-top-bottom-margin" data-test-approvals-loading>
+    <Hds::Icon @name="loading" @isAnimated={{true}} @size="24" />
+    <span class="has-left-margin-s">Loading approval requests…</span>
+  </div>
+{{else if (eq this.requests.length 0)}}
+  <Hds::Alert @type="inline" @color="neutral" class="has-top-bottom-margin" data-test-approvals-empty as |A|>
+    <A.Title>No Pending Requests</A.Title>
+    <A.Description>There are no credential requests awaiting approval.</A.Description>
+  </Hds::Alert>
+{{else}}
+  <Hds::Table
+    @caption="Pending credential approval requests"
+    data-test-approvals-table
+  >
+    <:head as |H|>
+      <H.Tr>
+        <H.Th>Requester</H.Th>
+        <H.Th>Role</H.Th>
+        <H.Th>Database</H.Th>
+        <H.Th>Requested At</H.Th>
+        <H.Th>Expires At</H.Th>
+        <H.Th>Actions</H.Th>
+      </H.Tr>
+    </:head>
+    <:body as |B|>
+      {{#each this.requests as |req|}}
+        <B.Tr data-test-approvals-row={{req.request_id}}>
+          <B.Td>
+            {{req.display_name}}
+            <br />
+            <small class="has-text-grey">{{req.entity_id}}</small>
+          </B.Td>
+          <B.Td><code>{{req.role_name}}</code></B.Td>
+          <B.Td><code>{{req.db_name}}</code></B.Td>
+          <B.Td>{{date-format req.requested_at "MMM d yyyy, h:mm a"}}</B.Td>
+          <B.Td>{{date-format req.expires_at "MMM d yyyy, h:mm a"}}</B.Td>
+          <B.Td>
+            {{#let (get this.actionState req.request_id) as |state|}}
+              {{#if (eq state "done")}}
+                <Hds::Badge @text="Done" @color="success" @icon="check" />
+              {{else}}
+                <Hds::ButtonSet>
+                  <Hds::Button
+                    @text="Approve"
+                    @color="primary"
+                    @isLoading={{eq state "approving"}}
+                    @isDisabled={{or (eq state "approving") (eq state "denying")}}
+                    {{on "click" (fn this.approveRequest req.request_id)}}
+                    data-test-approve-button={{req.request_id}}
+                  />
+                  <Hds::Button
+                    @text="Deny"
+                    @color="critical"
+                    @isLoading={{eq state "denying"}}
+                    @isDisabled={{or (eq state "approving") (eq state "denying")}}
+                    {{on "click" (fn this.denyRequest req.request_id)}}
+                    data-test-deny-button={{req.request_id}}
+                  />
+                </Hds::ButtonSet>
+              {{/if}}
+            {{/let}}
+          </B.Td>
+        </B.Tr>
+      {{/each}}
+    </:body>
+  </Hds::Table>
+{{/if}}

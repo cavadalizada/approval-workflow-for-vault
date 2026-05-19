@@ -1,0 +1,190 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+<Page::Header @title="My approval requests">
+  <:breadcrumbs>
+    <Page::Breadcrumbs
+      @breadcrumbs={{array
+        (hash label="Vault" route="vault.cluster.dashboard" icon="vault")
+        (hash label="Access" route="vault.cluster.access.methods")
+        (hash label="My requests")
+      }}
+    />
+  </:breadcrumbs>
+  <:description>
+    Requests you submitted that are awaiting approval, or approved requests whose credentials are ready to retrieve.
+  </:description>
+  <:actions>
+    <Hds::Button
+      @text="Refresh"
+      @color="secondary"
+      @icon="reload"
+      {{on "click" @onRefresh}}
+      data-test-refresh-my-requests
+    />
+  </:actions>
+</Page::Header>
+
+{{! ------------------------------------------------------------------ }}
+{{! Retrieved credentials — rendered independently of the request list. }}
+{{! Survives a list refresh so the user can copy credentials safely.    }}
+{{! ------------------------------------------------------------------ }}
+{{#each-in this.revealedSecrets as |reqId secret|}}
+  <div class="box has-bottom-margin-m" data-test-revealed-secret={{reqId}}>
+    <Hds::Alert @type="warning" class="has-bottom-margin-s" as |A|>
+      <A.Title>Copy now — this will not be shown again</A.Title>
+      <A.Description>{{secret.warning}}</A.Description>
+      <A.Description>
+        <span class="has-text-grey">Path: <code>{{secret.path}}</code></span>
+      </A.Description>
+    </Hds::Alert>
+
+    <div class="box has-background-grey-lightest">
+      {{#each-in secret.data as |key value|}}
+        <div class="level is-mobile has-bottom-margin-xs">
+          <div class="level-left">
+            <span class="has-text-weight-medium">{{key}}</span>
+          </div>
+          <div class="level-right">
+            <Hds::Copy::Snippet @textToCopy={{value}} @color="secondary" />
+          </div>
+        </div>
+      {{/each-in}}
+      {{#if secret.leaseDuration}}
+        <p class="is-size-7 has-text-grey has-top-margin-xs">
+          Credential valid for {{secret.leaseDuration}}s in the target system.
+        </p>
+      {{/if}}
+    </div>
+
+    <div class="has-top-margin-s">
+      <Hds::Button
+        @text="I've copied my credentials — dismiss"
+        @color="secondary"
+        @size="small"
+        {{on "click" (fn this.dismissSecret reqId)}}
+        data-test-dismiss-secret={{reqId}}
+      />
+    </div>
+  </div>
+{{/each-in}}
+
+{{! ------------------------------------------------------------------ }}
+{{! Request lists                                                        }}
+{{! ------------------------------------------------------------------ }}
+
+{{#if (eq @requests.length 0)}}
+  <Hds::ApplicationState data-test-my-requests-empty as |A|>
+    <A.Header @title="No requests found" />
+    <A.Body @text="When you access a path covered by an approval rule, your request will appear here." />
+  </Hds::ApplicationState>
+{{else}}
+
+  {{! Approved — ready to retrieve }}
+  {{#if this.approvedRequests.length}}
+    <h2 class="title is-5 has-top-margin-m">Ready to retrieve ({{this.approvedRequests.length}})</h2>
+    {{#each this.approvedRequests as |req|}}
+      <div class="box has-bottom-margin-s" data-test-approved-request={{req.id}}>
+        <div class="level">
+          <div class="level-left">
+            <div>
+              <p class="has-text-weight-semibold"><code>{{req.originalPath}}</code></p>
+              <p class="is-size-7 has-text-grey">Rule: {{req.ruleId}}</p>
+            </div>
+          </div>
+          <div class="level-right">
+            {{#if (get this.revealedSecrets req.id)}}
+              <Hds::Badge @text="Retrieved — see above" @color="success" @icon="check-circle" />
+            {{else}}
+              <Hds::Button
+                @text={{if (eq (get this.fetchingState req.id) "fetching") "Retrieving…" "Reveal Secret (View Once)"}}
+                @color="primary"
+                @size="small"
+                @icon="eye"
+                @isLoading={{eq (get this.fetchingState req.id) "fetching"}}
+                disabled={{eq (get this.fetchingState req.id) "fetching"}}
+                {{on "click" (fn this.revealSecret req)}}
+                data-test-reveal-secret={{req.id}}
+              />
+            {{/if}}
+          </div>
+        </div>
+      </div>
+    {{/each}}
+  {{/if}}
+
+  {{! Pending — waiting on approvers }}
+  {{#if this.pendingRequests.length}}
+    <h2 class="title is-5 has-top-margin-l">Awaiting approval ({{this.pendingRequests.length}})</h2>
+    <Hds::Table @caption="Pending requests" data-test-my-pending-table>
+      <:head as |H|>
+        <H.Tr>
+          <H.Th>Request ID</H.Th>
+          <H.Th>Target path</H.Th>
+          <H.Th>Justification</H.Th>
+          <H.Th>Rule</H.Th>
+          <H.Th>Expires</H.Th>
+        </H.Tr>
+      </:head>
+      <:body as |B|>
+        {{#each this.pendingRequests as |req|}}
+          <B.Tr data-test-my-pending-row={{req.id}}>
+            <B.Td>
+              <Hds::Copy::Snippet @textToCopy={{req.id}} @color="secondary" />
+            </B.Td>
+            <B.Td><code>{{req.originalPath}}</code></B.Td>
+            <B.Td>
+              {{#if req.justification}}
+                <span title={{req.justification}} style="display:inline-block;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom">
+                  {{req.justification}}
+                </span>
+              {{else}}
+                <span class="has-text-grey">—</span>
+              {{/if}}
+            </B.Td>
+            <B.Td>{{req.ruleId}}</B.Td>
+            <B.Td>{{req.expiresAt}}</B.Td>
+          </B.Tr>
+        {{/each}}
+      </:body>
+    </Hds::Table>
+  {{/if}}
+
+  {{! Denied / expired }}
+  {{#if this.resolvedRequests.length}}
+    <h2 class="title is-5 has-top-margin-l">Resolved ({{this.resolvedRequests.length}})</h2>
+    <Hds::Table @caption="Resolved requests" data-test-my-resolved-table>
+      <:head as |H|>
+        <H.Tr>
+          <H.Th>Request ID</H.Th>
+          <H.Th>Target path</H.Th>
+          <H.Th>Status</H.Th>
+          <H.Th>Created</H.Th>
+        </H.Tr>
+      </:head>
+      <:body as |B|>
+        {{#each this.resolvedRequests as |req|}}
+          <B.Tr data-test-my-resolved-row={{req.id}}>
+            <B.Td><code>{{req.id}}</code></B.Td>
+            <B.Td><code>{{req.originalPath}}</code></B.Td>
+            <B.Td>
+              {{#if (eq req.status "retrieved")}}
+                <Hds::Badge @text="Retrieved" @color="success" @icon="check-circle" />
+              {{else if (eq req.status "denied")}}
+                <Hds::Badge @text="Denied" @color="critical" @icon="x-circle" />
+              {{else if (eq req.status "expired")}}
+                <Hds::Badge @text="Expired" @color="neutral" @icon="clock" />
+              {{else}}
+                <Hds::Badge @text={{req.status}} @color="neutral" />
+              {{/if}}
+            </B.Td>
+            <B.Td>{{if req.resolvedAt req.resolvedAt req.createdAt}}</B.Td>
+          </B.Tr>
+        {{/each}}
+      </:body>
+    </Hds::Table>
+  {{/if}}
+
+{{/if}}

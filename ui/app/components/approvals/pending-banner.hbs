@@ -1,0 +1,40 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+{{#if this.isPolling}}
+  <Hds::Alert
+    @type="inline"
+    @color="highlight"
+    data-test-approval-pending-banner
+    as |A|
+  >
+    <A.Title>Approval required</A.Title>
+    <A.Description>
+      Your request is awaiting approval from an authorized approver.
+      This page will update automatically.
+      <br />
+      <span class="has-text-grey">
+        Request ID: <code>{{@requestId}}</code>
+      </span>
+    </A.Description>
+    <A.Description>
+      <Icon @name="loading" @size="16" class="is-rotating has-right-margin-xxs" />
+      Waiting for approval…
+    </A.Description>
+  </Hds::Alert>
+{{else if this.isDeniedOrExpired}}
+  <Hds::Alert
+    @type="inline"
+    @color="critical"
+    data-test-approval-rejected-banner
+    as |A|
+  >
+    <A.Title>Request not fulfilled</A.Title>
+    <A.Description>{{this.errorMessage}}</A.Description>
+    <A.Description>
+      <span class="has-text-grey">Request ID: <code>{{@requestId}}</code></span>
+    </A.Description>
+  </Hds::Alert>
+{{/if}}

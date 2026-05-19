@@ -1,0 +1,129 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+<Page::Header @title={{if this.isNew "Create approval rule" "Edit approval rule"}}>
+  <:breadcrumbs>
+    <Page::Breadcrumbs
+      @breadcrumbs={{array
+        (hash label="Vault" route="vault.cluster.dashboard" icon="vault")
+        (hash label="Access" route="vault.cluster.access.methods")
+        (hash label="Approval rules" route="vault.cluster.access.approvals")
+        (hash label=(if this.isNew "Create" @rule.id))
+      }}
+    />
+  </:breadcrumbs>
+</Page::Header>
+
+<form {{on "submit" this.save}} data-test-approval-rule-form>
+  <div class="box is-sideless is-fullwidth is-marginless">
+
+    <Hds::Form::TextInput::Field
+      @value={{this._id}}
+      @isRequired={{true}}
+      disabled={{not this.isNew}}
+      name="rule_id"
+      data-test-input="rule-id"
+      {{on "input" (fn this.updateField "id")}}
+      as |F|
+    >
+      <F.Label>Rule ID</F.Label>
+      <F.HelperText>
+        A unique identifier for this rule (letters, numbers, hyphens, underscores). Cannot be changed after creation.
+      </F.HelperText>
+    </Hds::Form::TextInput::Field>
+
+    <Hds::Form::TextInput::Field
+      @value={{this._targetMountPath}}
+      @isRequired={{true}}
+      name="target_mount_path"
+      placeholder="database/creds/* or secret/data/prod/*"
+      data-test-input="target-mount-path"
+      {{on "input" (fn this.updateField "targetMountPath")}}
+      as |F|
+    >
+      <F.Label>Target path</F.Label>
+      <F.HelperText>
+        Path to intercept. Supports exact match
+        (<code>database/creds/my-role</code>), trailing-wildcard glob
+        (<code>database/creds/*</code>), or bare <code>*</code> to match everything.
+      </F.HelperText>
+    </Hds::Form::TextInput::Field>
+
+    <Hds::Form::Textarea::Field
+      @value={{this.approversText}}
+      @isRequired={{true}}
+      name="authorized_approvers"
+      rows="4"
+      placeholder="Enter one Vault entity ID per line"
+      data-test-input="authorized-approvers"
+      {{on "input" this.updateApprovers}}
+      as |F|
+    >
+      <F.Label>Authorized approvers</F.Label>
+      <F.HelperText>
+        One Vault entity ID per line. Entity IDs come from your OIDC auth method
+        (<code>vault read identity/entity/id/&lt;id&gt;</code>).
+      </F.HelperText>
+    </Hds::Form::Textarea::Field>
+
+    <Hds::Form::TextInput::Field
+      @value={{this._approvalsRequired}}
+      type="number"
+      min="1"
+      name="approvals_required"
+      data-test-input="approvals-required"
+      {{on "input" (fn this.updateNumber "approvalsRequired")}}
+      as |F|
+    >
+      <F.Label>Approvals required</F.Label>
+      <F.HelperText>
+        Minimum number of distinct approvals before the request is executed. Default: 1.
+      </F.HelperText>
+    </Hds::Form::TextInput::Field>
+
+    <Hds::Form::TextInput::Field
+      @value={{this._slackWebhookUrl}}
+      name="slack_webhook_url"
+      placeholder="https://hooks.slack.com/services/…"
+      data-test-input="slack-webhook-url"
+      {{on "input" (fn this.updateField "slackWebhookUrl")}}
+      as |F|
+    >
+      <F.Label>Slack webhook URL <Hds::Badge @text="Optional" @color="neutral" @size="small" /></F.Label>
+      <F.HelperText>
+        When set, an approval notification is posted to this Slack channel when a request is intercepted.
+      </F.HelperText>
+    </Hds::Form::TextInput::Field>
+
+    <Hds::Form::Textarea::Field
+      @value={{this._description}}
+      name="description"
+      rows="2"
+      data-test-input="description"
+      {{on "input" (fn this.updateField "description")}}
+      as |F|
+    >
+      <F.Label>Description <Hds::Badge @text="Optional" @color="neutral" @size="small" /></F.Label>
+    </Hds::Form::Textarea::Field>
+
+  </div>
+
+  <div class="field is-grouped box is-fullwidth is-bottomless">
+    <Hds::ButtonSet>
+      <Hds::Button
+        type="submit"
+        @text={{if this.isSaving "Saving…" "Save"}}
+        @isLoading={{this.isSaving}}
+        data-test-submit-rule
+      />
+      <Hds::Button
+        @text="Cancel"
+        @color="secondary"
+        type="button"
+        {{on "click" this.cancel}}
+      />
+    </Hds::ButtonSet>
+  </div>
+</form>

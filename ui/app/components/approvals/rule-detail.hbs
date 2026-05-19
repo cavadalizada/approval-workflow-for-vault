@@ -1,0 +1,121 @@
+{{!
+  Copyright cavadalizada 2025
+  SPDX-License-Identifier: BUSL-1.1
+}}
+
+<Page::Header @title={{@rule.id}}>
+  <:breadcrumbs>
+    <Page::Breadcrumbs
+      @breadcrumbs={{array
+        (hash label="Vault" route="vault.cluster.dashboard" icon="vault")
+        (hash label="Access" route="vault.cluster.access.methods")
+        (hash label="Approval rules" route="vault.cluster.access.approvals")
+        (hash label=@rule.id)
+      }}
+    />
+  </:breadcrumbs>
+  <:actions>
+    <Hds::ButtonSet>
+      <Hds::Button
+        @text="Edit"
+        @color="secondary"
+        @icon="edit"
+        @route="vault.cluster.access.approvals.edit"
+        @model={{@rule.id}}
+        data-test-edit-rule
+      />
+      <Hds::Button
+        @text="Delete"
+        @color="critical"
+        @icon="trash"
+        {{on "click" this.openDeleteModal}}
+        data-test-delete-rule
+      />
+    </Hds::ButtonSet>
+  </:actions>
+</Page::Header>
+
+<div class="box is-fullwidth is-marginless">
+  <Hds::Table
+    @caption="Rule details"
+    @columns={{array (hash label="Field") (hash label="Value")}}
+  >
+    <:body as |B|>
+      <B.Tr>
+        <B.Td class="has-text-weight-semibold">Rule ID</B.Td>
+        <B.Td><code>{{@rule.id}}</code></B.Td>
+      </B.Tr>
+      <B.Tr>
+        <B.Td class="has-text-weight-semibold">Target path</B.Td>
+        <B.Td><code>{{@rule.targetMountPath}}</code></B.Td>
+      </B.Tr>
+      <B.Tr>
+        <B.Td class="has-text-weight-semibold">Approvals required</B.Td>
+        <B.Td>{{@rule.approvalsRequired}}</B.Td>
+      </B.Tr>
+      <B.Tr>
+        <B.Td class="has-text-weight-semibold">Authorized approvers</B.Td>
+        <B.Td>
+          {{#if @rule.authorizedApprovers.length}}
+            <ul>
+              {{#each @rule.authorizedApprovers as |id|}}
+                <li><code>{{id}}</code></li>
+              {{/each}}
+            </ul>
+          {{else}}
+            <span class="has-text-grey">None</span>
+          {{/if}}
+        </B.Td>
+      </B.Tr>
+      {{#if @rule.slackWebhookUrl}}
+        <B.Tr>
+          <B.Td class="has-text-weight-semibold">Slack webhook</B.Td>
+          <B.Td>
+            <Hds::Badge @text="Configured" @color="success" @icon="check-circle" />
+          </B.Td>
+        </B.Tr>
+      {{/if}}
+      {{#if @rule.description}}
+        <B.Tr>
+          <B.Td class="has-text-weight-semibold">Description</B.Td>
+          <B.Td>{{@rule.description}}</B.Td>
+        </B.Tr>
+      {{/if}}
+      {{#if @rule.createdByEntityId}}
+        <B.Tr>
+          <B.Td class="has-text-weight-semibold">Created by</B.Td>
+          <B.Td><code>{{@rule.createdByEntityId}}</code></B.Td>
+        </B.Tr>
+      {{/if}}
+    </:body>
+  </Hds::Table>
+</div>
+
+{{#if this.showDeleteModal}}
+  <Hds::Modal
+    id="confirm-delete-rule"
+    @color="critical"
+    @onClose={{this.closeDeleteModal}}
+    as |M|
+  >
+    <M.Header>Delete rule "{{@rule.id}}"?</M.Header>
+    <M.Body>
+      <p>
+        This rule will be permanently deleted. Any in-flight approval requests against this rule
+        will be unable to be denied once deleted.
+      </p>
+    </M.Body>
+    <M.Footer as |F|>
+      <Hds::ButtonSet>
+        <Hds::Button
+          @text={{if this.isDeleting "Deleting…" "Delete"}}
+          @color="critical"
+          @isLoading={{this.isDeleting}}
+          {{on "click" this.deleteRule}}
+          data-test-confirm-delete-button
+        />
+        <Hds::Button @text="Cancel" @color="secondary" {{on "click" F.close}} />
+      </Hds::ButtonSet>
+    </M.Footer>
+  </Hds::Modal>
+{{/if}}
