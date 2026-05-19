@@ -14,4 +14,7 @@ export default Model.extend({
   rotationPeriod: attr('number'),
   ttl: attr('number'),
   roleType: attr('string'),
+  // Approval workflow fields
+  status: attr('string'),    // "pending" | "denied" | "expired" — set when approval is required
+  requestId: attr('string'), // approval request UUID to poll against
 });

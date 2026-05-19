@@ -9,19 +9,33 @@ export default RESTSerializer.extend({
   primaryKey: 'username',
 
   normalizePayload(payload) {
-    if (payload.data) {
+    if (!payload.data) {
+      return undefined;
+    }
+
+    // Approval-workflow interception: the backend returned a pending/denied/expired status
+    // instead of a credential. Use requestId as a fallback identifier.
+    const { status } = payload.data;
+    if (status === 'pending' || status === 'denied' || status === 'expired') {
       return {
-        username: payload.data.username,
-        password: payload.data.password,
-        leaseId: payload.lease_id,
-        leaseDuration: payload.lease_duration,
-        lastVaultRotation: payload.data.last_vault_rotation,
-        rotationPeriod: payload.data.rotation_period,
-        ttl: payload.data.ttl,
-        // roleType is added on adapter
+        username: payload.data.request_id, // used as the Ember Data record ID
+        status,
+        requestId: payload.data.request_id,
         roleType: payload.roleType,
       };
     }
+
+    return {
+      username: payload.data.username,
+      password: payload.data.password,
+      leaseId: payload.lease_id,
+      leaseDuration: payload.lease_duration,
+      lastVaultRotation: payload.data.last_vault_rotation,
+      rotationPeriod: payload.data.rotation_period,
+      ttl: payload.data.ttl,
+      // roleType is added on adapter
+      roleType: payload.roleType,
+    };
   },
 
   normalizeResponse(store, primaryModelClass, payload, id, requestType) {
