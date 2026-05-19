@@ -204,6 +204,10 @@ func NewSystemBackend(core *Core, logger log.Logger, config *logical.BackendConf
 				"activation-flags/oauth-resource-server/activate",
 				"activation-flags/oauth-resource-server/deactivate",
 				"config/oauth-resource-server/*",
+				// OSS approval workflow — only the list endpoints require sudo;
+				// individual record reads/writes use standard ACL capabilities.
+				"approvals/config",
+				"approvals/pending",
 			},
 
 			Unauthenticated: unauthenticatedPaths,
@@ -262,6 +266,7 @@ func NewSystemBackend(core *Core, logger log.Logger, config *logical.BackendConf
 	b.Backend.Paths = append(b.Backend.Paths, b.wellKnownPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.activationFlagsPaths()...)
 	b.Backend.Paths = append(b.Backend.Paths, b.useCaseConsumptionBillingPaths()...)
+	b.Backend.Paths = append(b.Backend.Paths, b.approvalPaths()...)
 
 	if core.rawEnabled {
 		b.Backend.Paths = append(b.Backend.Paths, b.rawPaths()...)

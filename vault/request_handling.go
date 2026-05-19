@@ -1444,6 +1444,14 @@ func (c *Core) handleRequest(ctx context.Context, req *logical.Request) (retResp
 		ctx = logical.CreateContextWithSnapshotID(ctx, "")
 	}
 
+	// OSS approval workflow: intercept before dispatching to any backend plugin.
+	// isApprovalBypass guards re-injected execution requests from re-trapping.
+	if !isApprovalBypass(ctx) {
+		if approvalResp, intercepted, approvalErr := c.checkNeedsApproval(ctx, req, auth); intercepted || approvalErr != nil {
+			return approvalResp, auth, approvalErr
+		}
+	}
+
 	// Route the request
 	resp, routeErr := c.doRouting(ctx, req)
 	if resp != nil {
