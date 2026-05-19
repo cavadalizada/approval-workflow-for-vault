@@ -90,6 +90,7 @@ const API_PATHS = {
     namespaces: 'sys/namespaces',
     groups: 'identity/group/id',
     entities: 'identity/entity/id',
+    approvals: 'sys/approvals/config',
   },
   tools: {
     wrap: 'sys/wrapping/wrap',
@@ -130,6 +131,7 @@ const API_PATHS_TO_ROUTE_PARAMS = {
   'sys/control-group/': { route: 'vault.cluster.access.control-groups', models: [] },
   'sys/leases/lookup': { route: 'vault.cluster.access.leases', models: [] },
   'sys/namespaces': { route: 'vault.cluster.access.namespaces', models: [] },
+  'sys/approvals/config': { route: 'vault.cluster.access.approvals', models: [] },
 };
 
 // Canary endpoints: quick check for “meaningful UI access” in the *current* namespace.

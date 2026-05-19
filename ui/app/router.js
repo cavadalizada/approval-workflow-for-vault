@@ -122,6 +122,14 @@ Router.map(function () {
         this.route('control-groups');
         this.route('control-groups-configure', { path: '/control-groups/configure' });
         this.route('control-group-accessor', { path: '/control-groups/:accessor' });
+        this.route('approvals', function () {
+          this.route('index', { path: '/' });
+          this.route('create');
+          this.route('rule', { path: '/rules/:rule_id' });
+          this.route('edit', { path: '/rules/:rule_id/edit' });
+          this.route('requests');
+          this.route('my-requests');
+        });
         this.route('namespaces', function () {
           this.route('index', { path: '/' });
           this.route('create');

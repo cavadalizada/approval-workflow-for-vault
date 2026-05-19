@@ -61,6 +61,26 @@
         data-test-sidebar-nav-link="Approval workflow"
       />
     {{/if}}
+    {{#if (has-permission "access" routeParams="approvals")}}
+      <Nav.Link
+        @route="vault.cluster.access.approvals"
+        @current-when="vault.cluster.access.approvals.index vault.cluster.access.approvals.create vault.cluster.access.approvals.rule"
+        @text="Approval rules"
+        data-test-sidebar-nav-link="Approval rules"
+      />
+      <Nav.Link
+        @route="vault.cluster.access.approvals.requests"
+        @current-when="vault.cluster.access.approvals.requests"
+        @text="Pending requests"
+        data-test-sidebar-nav-link="Pending requests"
+      />
+      <Nav.Link
+        @route="vault.cluster.access.approvals.my-requests"
+        @current-when="vault.cluster.access.approvals.my-requests"
+        @text="My requests"
+        data-test-sidebar-nav-link="My requests"
+      />
+    {{/if}}
     {{#if (has-permission "access" routeParams="leases")}}
       <Nav.Link @route="vault.cluster.access.leases" @text="Leases" data-test-sidebar-nav-link="Leases" />
     {{/if}}
