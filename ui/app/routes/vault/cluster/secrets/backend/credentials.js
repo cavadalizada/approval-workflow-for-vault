@@ -5,7 +5,6 @@
 
 import Route from '@ember/routing/route';
 import { service } from '@ember/service';
-import ControlGroupError from 'vault/lib/control-group-error';
 
 const SUPPORTED_DYNAMIC_BACKENDS = ['database', 'ssh', 'aws', 'totp'];
 
@@ -31,17 +30,6 @@ export default Route.extend({
       const previousRoute = transition.from?.name ?? 'vault.cluster.secrets.backend.list-root';
       this.set('backRoute', previousRoute);
     }
-  },
-
-  getDatabaseCredential(backend, secret, roleType = '') {
-    return this.store.queryRecord('database/credential', { backend, secret, roleType }).catch((error) => {
-      if (error instanceof ControlGroupError) {
-        throw error;
-      }
-      // Unless it's a control group error, we want to pass back error info
-      // so we can render it on the GenerateCredentialsDatabase component
-      return error;
-    });
   },
 
   async getAwsRole(backend, id) {
@@ -71,7 +59,36 @@ export default Route.extend({
     const roleType = params.roleType;
     let dbCred, awsRole, totpCodePeriod, backRoute;
     if (backendType === 'database') {
-      dbCred = await this.getDatabaseCredential(backendPath, role, roleType);
+      // Check if either the dynamic or static creds path for this role requires approval.
+      // Both are checked in parallel; the form is shown if either matches a rule.
+      // Errors (permission denied, no rules configured) are swallowed — default to false
+      // so that non-human callers and users without sys/ read access are never blocked.
+      //
+      // When approval IS required we also infer the correct roleType so the adapter uses
+      // a single targeted request instead of allSettled (which would fire both /creds/ and
+      // /static-creds/ simultaneously, creating two orphaned pending requests in storage).
+      let requiresApproval = false;
+      let effectiveRoleType = roleType || '';
+      try {
+        const approvalAdapter = this.store.adapterFor('approval-request');
+        const [dynamicCheck, staticCheck] = await Promise.allSettled([
+          approvalAdapter.checkRequiresApproval(`${backendPath}/creds/${role}`),
+          approvalAdapter.checkRequiresApproval(`${backendPath}/static-creds/${role}`),
+        ]);
+        const dynamicRequires = dynamicCheck.value?.data?.requires_approval === true;
+        const staticRequires = staticCheck.value?.data?.requires_approval === true;
+        if (dynamicRequires || staticRequires) {
+          requiresApproval = true;
+          // Infer role type only when not already known from the URL param.
+          // Prefer dynamic; fall back to static only when dynamic path is not covered.
+          if (!effectiveRoleType) {
+            effectiveRoleType = dynamicRequires ? 'dynamic' : 'static';
+          }
+        }
+      } catch (_) {
+        // Intentionally swallowed — see comment above.
+      }
+      return { ...backendData, roleName: role, roleType: effectiveRoleType, dbCred: null, requiresApproval };
     } else if (backendType === 'aws') {
       awsRole = await this.getAwsRole(backendPath, role);
     } else if (backendType === 'totp') {
